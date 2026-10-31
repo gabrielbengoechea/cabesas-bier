@@ -68,9 +68,17 @@
   #loader div{font-size:13px;color:var(--muted)}
   #hint{position:fixed;left:50%;top:84px;transform:translateX(-50%);font-size:12px;color:var(--muted);padding:7px 12px;pointer-events:none;transition:opacity .8s}
   @media (max-width: 900px){
-    #kpi{top:auto;left:16px;right:16px;width:auto;bottom:16px;max-height:44vh}
-    #top{right:16px}
-    #views{bottom:calc(44vh + 24px);right:16px}
+    #top{right:16px;gap:8px}
+    #brand{padding:8px 12px}#brand p{display:none}
+    #toggle button{padding:9px 12px}
+    #opts{flex-direction:row;gap:14px;padding:8px 12px}
+    #kpi{top:auto;left:12px;right:12px;width:auto;bottom:12px;max-height:30vh;padding:12px;gap:8px;display:grid;grid-template-columns:repeat(2,1fr)}
+    #kpi header,#legend{grid-column:1/-1}
+    #legend p{display:none}
+    .card{padding:9px 11px}.card .val{font-size:22px}.card .sub{display:none}
+    #views{left:12px;right:12px;bottom:calc(30vh + 20px);flex-wrap:nowrap;overflow-x:auto;padding:6px}
+    #views span{display:none}
+    .chip{white-space:nowrap;padding:7px 11px;font-size:12px}
     #hint{display:none}
   }
   @media (max-width: 520px){
