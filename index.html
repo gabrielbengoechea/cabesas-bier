@@ -1,0 +1,893 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cabesas Bier · Optimización del depósito 3D</title>
+<meta name="description" content="Visor 3D interactivo que compara el estado actual del almacenamiento de Cabesas Bier con una propuesta de depósito reorganizado.">
+<style>
+  :root{
+    --bg:#0e1116; --panel:rgba(16,20,27,.86); --panel-solid:#12161d; --line:rgba(255,255,255,.09);
+    --ink:#e9edf2; --muted:#8e98a6; --accent:#f2a33a; --good:#3ecf8e; --bad:#ff6b5b; --warn:#f2c94c;
+    --font: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:var(--font);overflow:hidden}
+  #app{position:fixed;inset:0}
+  canvas{display:block}
+  .glass{background:var(--panel);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid var(--line);border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+  /* Cabecera */
+  #top{position:fixed;left:16px;top:16px;right:356px;display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap;pointer-events:none}
+  #brand{padding:12px 16px;pointer-events:auto}
+  #brand h1{margin:0;font-size:15px;font-weight:650;letter-spacing:.2px}
+  #brand p{margin:3px 0 0;font-size:12px;color:var(--muted)}
+  #toggle{display:flex;padding:5px;gap:4px;pointer-events:auto}
+  #toggle button{appearance:none;border:0;cursor:pointer;font:600 13px var(--font);color:var(--muted);background:transparent;padding:11px 16px;border-radius:10px;transition:background .25s,color .25s;white-space:nowrap}
+  #toggle button[aria-pressed="true"]{color:#111;background:var(--accent)}
+  #toggle button[data-state="actual"][aria-pressed="true"]{background:#ff8a5b}
+  #toggle button[data-state="opt"][aria-pressed="true"]{background:var(--good)}
+  #toggle button:focus-visible,.chip:focus-visible,#opts input:focus-visible{outline:2px solid #fff;outline-offset:2px}
+  #opts{display:flex;flex-direction:column;gap:6px;padding:10px 14px;font-size:12px;color:var(--muted);pointer-events:auto}
+  #opts label{display:flex;gap:8px;align-items:center;cursor:pointer;user-select:none}
+  #opts input{accent-color:var(--accent);width:15px;height:15px}
+  #opts label.disabled{opacity:.45;cursor:not-allowed}
+  /* Vistas */
+  #views{position:fixed;left:16px;bottom:16px;right:356px;display:flex;gap:8px;flex-wrap:wrap;padding:8px}
+  #views span{font-size:11px;color:var(--muted);align-self:center;padding:0 6px 0 4px;text-transform:uppercase;letter-spacing:.8px}
+  .chip{appearance:none;border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--ink);font:500 12.5px var(--font);padding:9px 13px;border-radius:999px;cursor:pointer;transition:background .2s,border-color .2s}
+  .chip:hover{background:rgba(255,255,255,.1)}
+  .chip.active{border-color:var(--accent);color:var(--accent)}
+  /* Panel KPI */
+  #kpi{position:fixed;right:16px;top:16px;bottom:16px;width:324px;padding:18px 18px 14px;display:flex;flex-direction:column;gap:12px;overflow:auto}
+  #kpi header{display:flex;justify-content:space-between;align-items:baseline}
+  #kpi h2{margin:0;font-size:13px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);font-weight:600}
+  #statePill{font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;background:#ff8a5b;color:#111;transition:background .4s}
+  .card{border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:rgba(255,255,255,.025)}
+  .card .lbl{font-size:12px;color:var(--muted);display:flex;justify-content:space-between;gap:8px}
+  .card .val{font-size:30px;font-weight:700;letter-spacing:-.5px;margin-top:4px;font-variant-numeric:tabular-nums}
+  .card .val small{font-size:14px;font-weight:600;color:var(--muted);margin-left:4px}
+  .card .sub{font-size:11.5px;color:var(--muted);margin-top:4px;line-height:1.4}
+  .bar{height:6px;background:rgba(255,255,255,.08);border-radius:6px;margin-top:9px;overflow:hidden}
+  .bar i{display:block;height:100%;width:0;background:var(--accent);border-radius:6px;transition:width 1.4s cubic-bezier(.2,.8,.2,1),background .6s}
+  .delta{font-size:11px;font-weight:700;padding:2px 7px;border-radius:6px;background:rgba(255,255,255,.07);color:var(--muted);white-space:nowrap}
+  .delta.up{background:rgba(62,207,142,.15);color:var(--good)}
+  .delta.down{background:rgba(255,107,91,.15);color:var(--bad)}
+  .risk{display:flex;gap:6px;margin-top:9px}
+  .risk i{flex:1;height:6px;border-radius:6px;background:rgba(255,255,255,.08);transition:background .6s}
+  #legend{font-size:11px;color:var(--muted);line-height:1.5;border-top:1px solid var(--line);padding-top:10px;margin-top:auto}
+  #legend b{color:var(--ink);font-weight:600}
+  .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin:0 5px -1px 0}
+  /* Etiquetas 3D */
+  #labels{position:fixed;inset:0;pointer-events:none;overflow:hidden}
+  .tag{position:absolute;transform:translate(-50%,-100%);font-size:11px;font-weight:600;color:#fff;background:rgba(10,13,18,.72);border:1px solid rgba(255,255,255,.14);padding:4px 8px;border-radius:7px;white-space:nowrap;transition:opacity .3s}
+  .tag::after{content:"";position:absolute;left:50%;bottom:-6px;width:1px;height:6px;background:rgba(255,255,255,.4)}
+  .tag.warn{border-color:rgba(255,138,91,.6)}
+  .tag.ok{border-color:rgba(62,207,142,.6)}
+  /* Carga */
+  #loader{position:fixed;inset:0;display:grid;place-items:center;background:var(--bg);z-index:10;transition:opacity .6s}
+  #loader div{font-size:13px;color:var(--muted)}
+  #hint{position:fixed;left:50%;top:84px;transform:translateX(-50%);font-size:12px;color:var(--muted);padding:7px 12px;pointer-events:none;transition:opacity .8s}
+  @media (max-width: 900px){
+    #kpi{top:auto;left:16px;right:16px;width:auto;bottom:16px;max-height:44vh}
+    #top{right:16px}
+    #views{bottom:calc(44vh + 24px);right:16px}
+    #hint{display:none}
+  }
+  @media (max-width: 520px){
+    #brand p{display:none}
+    #toggle button{padding:9px 10px;font-size:12px}
+    .card .val{font-size:24px}
+  }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="app"></div>
+<div id="labels"></div>
+
+<div id="top">
+  <div id="brand" class="glass">
+    <h1>Cabesas Bier · Tacuarembó</h1>
+    <p>Propuesta de optimización del depósito · Proyecto 4, UTEC</p>
+  </div>
+  <div id="toggle" class="glass" role="group" aria-label="Estado de la planta">
+    <button data-state="actual" aria-pressed="true">Estado actual (saturado)</button>
+    <button data-state="opt" aria-pressed="false">Planta optimizada</button>
+  </div>
+  <div id="opts" class="glass">
+    <label id="lblTerc" class="disabled"><input type="checkbox" id="chkTerc" disabled> Tercerizar excedente estacional</label>
+    <label><input type="checkbox" id="chkRoof"> Mostrar cubiertas</label>
+  </div>
+</div>
+
+<div id="hint" class="glass">Arrastrá para rotar · rueda para zoom · clic derecho para desplazar</div>
+
+<div id="views" class="glass" role="group" aria-label="Vistas predefinidas">
+  <span>Vistas</span>
+  <button class="chip" data-view="general">Vista general</button>
+  <button class="chip" data-view="nave">Nave principal</button>
+  <button class="chip" data-view="ferm">Área de fermentación</button>
+  <button class="chip" data-view="env">Línea de envasado</button>
+  <button class="chip" data-view="dep">Zona de depósito / logística</button>
+</div>
+
+<aside id="kpi" class="glass" aria-live="polite">
+  <header><h2>Panel ejecutivo</h2><span id="statePill">ESTADO ACTUAL</span></header>
+
+  <div class="card">
+    <div class="lbl">Superficie útil de tránsito <span class="delta" id="d1">—</span></div>
+    <div class="val"><span id="v1">0</span><small>%</small></div>
+    <div class="bar"><i id="b1"></i></div>
+    <div class="sub" id="s1">Pasillos y vías de evacuación libres de cargas</div>
+  </div>
+
+  <div class="card">
+    <div class="lbl">Capacidad de almacenamiento <span class="delta" id="d2">—</span></div>
+    <div class="val"><span id="v2">0</span><small id="u2">posiciones</small></div>
+    <div class="bar"><i id="b2"></i></div>
+    <div class="sub" id="s2">—</div>
+  </div>
+
+  <div class="card">
+    <div class="lbl">Riesgo operativo / seguridad <span class="delta" id="d3">—</span></div>
+    <div class="val" id="v3">—</div>
+    <div class="risk"><i id="r1"></i><i id="r2"></i><i id="r3"></i></div>
+    <div class="sub" id="s3">—</div>
+  </div>
+
+  <div class="card">
+    <div class="lbl">Eficiencia de flujo de trabajo <span class="delta" id="d4">—</span></div>
+    <div class="val"><span id="v4">0</span><small>%</small></div>
+    <div class="bar"><i id="b4"></i></div>
+    <div class="sub" id="s4">—</div>
+  </div>
+
+  <div id="legend">
+    <div><span class="sw" style="background:#f2c230"></span>Pasillo de autoelevador &nbsp; <span class="sw" style="background:#2fbf71"></span>Vía peatonal / evacuación</div>
+    <p style="margin:8px 0 0"><b>Modelo ilustrativo.</b> Naves según los planos de regularización (Ríos, 2023): maltería 48,0 × 21,9 m; cervecería 15,9 × 33,4 m; depósito 9,3 × 12,0 m. Alturas, equipos y cantidades de carga aproximados a partir de las fotos de la visita del 26/10/2026. Los indicadores se calculan sobre la geometría del modelo; no son mediciones de planta.</p>
+  </div>
+</aside>
+
+<div id="loader"><div>Cargando planta 3D…</div></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+
+/* =====================================================================
+   Utilidades
+   ===================================================================== */
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
+const rnd = mulberry32(20261026);
+const jit = (a)=> (rnd()*2-1)*a;
+const ease = t => t<.5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2;
+const clamp01 = t => Math.max(0,Math.min(1,t));
+const lerp = (a,b,t)=>a+(b-a)*t;
+
+function canvasTex(w,h,draw,repeat){
+  const c=document.createElement('canvas');c.width=w;c.height=h;
+  const g=c.getContext('2d');draw(g,w,h);
+  const t=new THREE.CanvasTexture(c);t.colorSpace=THREE.SRGBColorSpace;t.anisotropy=8;
+  if(repeat){t.wrapS=t.wrapT=THREE.RepeatWrapping;t.repeat.set(repeat[0],repeat[1]);}
+  return t;
+}
+function noise(g,w,h,n,cols,sz=2){for(let i=0;i<n;i++){g.fillStyle=cols[(Math.random()*cols.length)|0];g.globalAlpha=Math.random()*.5;g.fillRect(Math.random()*w,Math.random()*h,sz,sz);}g.globalAlpha=1;}
+
+/* =====================================================================
+   Escena, renderizador, cámara
+   ===================================================================== */
+const app=document.getElementById('app');
+const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled=true;
+renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+renderer.toneMapping=THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure=1.0;
+renderer.outputColorSpace=THREE.SRGBColorSpace;
+app.appendChild(renderer.domElement);
+
+const scene=new THREE.Scene();
+const SKY_A=new THREE.Color('#d9c7a8'), SKY_B=new THREE.Color('#bcd3e6');
+scene.background=SKY_A.clone();
+scene.fog=new THREE.Fog(scene.background.getHex(),120,260);
+
+const pmrem=new THREE.PMREMGenerator(renderer);
+scene.environment=pmrem.fromScene(new RoomEnvironment(renderer),0.04).texture;
+
+const camera=new THREE.PerspectiveCamera(42,innerWidth/innerHeight,0.1,600);
+camera.position.set(88,62,96);
+const controls=new OrbitControls(camera,renderer.domElement);
+controls.enableDamping=true;controls.dampingFactor=0.06;
+controls.target.set(26,0,28);
+controls.maxPolarAngle=Math.PI*0.48;controls.minDistance=6;controls.maxDistance=220;
+
+/* Luces */
+const hemi=new THREE.HemisphereLight(0xffe2bd,0x4a3f33,0.55);
+scene.add(hemi);
+const sun=new THREE.DirectionalLight(0xffc98a,1.6);
+sun.position.set(70,90,20);
+sun.target.position.set(26,0,30);
+sun.castShadow=true;
+sun.shadow.mapSize.set(2048,2048);
+const sc=sun.shadow.camera;sc.left=-62;sc.right=62;sc.top=62;sc.bottom=-62;sc.near=10;sc.far=260;
+sun.shadow.bias=-0.0004;sun.shadow.normalBias=0.03;sun.shadow.radius=4;
+scene.add(sun,sun.target);
+const fill=new THREE.DirectionalLight(0xbfd6ff,0.25);fill.position.set(-40,40,-60);scene.add(fill);
+
+/* =====================================================================
+   Texturas procedurales
+   ===================================================================== */
+const T={};
+T.concrete=canvasTex(512,512,(g,w,h)=>{g.fillStyle='#a6a39c';g.fillRect(0,0,w,h);noise(g,w,h,9000,['#8f8c85','#b8b5ae','#9b978f','#7c7972'],2);
+  for(let i=0;i<14;i++){const x=Math.random()*w,y=Math.random()*h,r=20+Math.random()*70;const gr=g.createRadialGradient(x,y,0,x,y,r);gr.addColorStop(0,'rgba(70,64,55,.18)');gr.addColorStop(1,'rgba(70,64,55,0)');g.fillStyle=gr;g.fillRect(x-r,y-r,2*r,2*r);}
+  g.strokeStyle='rgba(60,60,60,.25)';g.lineWidth=1;for(let i=0;i<=w;i+=128){g.beginPath();g.moveTo(i,0);g.lineTo(i,h);g.stroke();g.beginPath();g.moveTo(0,i);g.lineTo(w,i);g.stroke();}
+},[10,10]);
+T.epoxy=canvasTex(256,256,(g,w,h)=>{g.fillStyle='#6d8279';g.fillRect(0,0,w,h);noise(g,w,h,3000,['#62766e','#778c83'],1);},[14,14]);
+T.grass=canvasTex(512,512,(g,w,h)=>{g.fillStyle='#5d7a3c';g.fillRect(0,0,w,h);noise(g,w,h,22000,['#4f6b31','#6f8d48','#56733a','#7d9a52'],2);},[40,40]);
+T.asphalt=canvasTex(256,256,(g,w,h)=>{g.fillStyle='#55575a';g.fillRect(0,0,w,h);noise(g,w,h,7000,['#45474a','#66686b'],2);},[2,12]);
+T.gravel=canvasTex(256,256,(g,w,h)=>{g.fillStyle='#9a8f7e';g.fillRect(0,0,w,h);noise(g,w,h,9000,['#7f7565','#b2a793','#8c8270'],2);},[8,8]);
+function corrugated(base,dark,light){return canvasTex(256,64,(g,w,h)=>{for(let x=0;x<w;x+=16){const gr=g.createLinearGradient(x,0,x+16,0);gr.addColorStop(0,dark);gr.addColorStop(.5,light);gr.addColorStop(1,dark);g.fillStyle=gr;g.fillRect(x,0,16,h);}g.fillStyle=base;g.globalAlpha=.35;g.fillRect(0,0,w,h);g.globalAlpha=1;},[12,1]);}
+T.wallCream=corrugated('#e6dcc0','#c9bd9c','#f1e9d2');
+T.wallGrey=corrugated('#5a6067','#454a50','#6c7279');
+T.roof=corrugated('#c9ccce','#a4a8ab','#dfe2e3');
+function canSide(palette){return canvasTex(256,256,(g,w,h)=>{
+  g.fillStyle='#d8c39a';g.fillRect(0,0,w,h);
+  const tiers=8,th=h/tiers;
+  for(let t=0;t<tiers;t++){const y=t*th;
+    for(let x=0;x<w;x+=11){const col=palette[(((x/11)|0)+t*3)%palette.length];
+      const gr=g.createLinearGradient(x,0,x+11,0);gr.addColorStop(0,'rgba(0,0,0,.35)');gr.addColorStop(.45,col);gr.addColorStop(1,'rgba(0,0,0,.35)');
+      g.fillStyle=col;g.fillRect(x+1,y+3,9.5,th-5);g.fillStyle=gr;g.globalAlpha=.55;g.fillRect(x+1,y+3,9.5,th-5);g.globalAlpha=1;
+      g.fillStyle='rgba(255,255,255,.35)';g.fillRect(x+3,y+5,2,th-9);}
+    g.fillStyle='#c9ad7c';g.fillRect(0,y,w,3);}
+});}
+T.cansMix=canSide(['#2b7bd0','#36b3a6','#f2c230','#e8eef2','#4fb04a','#2b7bd0','#e86a2b']);
+T.cansRed=canSide(['#d7263d','#e04358','#f2f2f2','#c21d33']);
+T.cansTop=canvasTex(128,128,(g,w,h)=>{g.fillStyle='#c9ad7c';g.fillRect(0,0,w,h);g.fillStyle='#b9b9b9';for(let y=6;y<h;y+=12)for(let x=6;x<w;x+=12){g.beginPath();g.arc(x,y,5,0,7);g.fill();}});
+T.bags=canvasTex(256,256,(g,w,h)=>{g.fillStyle='#ecebe6';g.fillRect(0,0,w,h);const rows=7,rh=h/rows;for(let r=0;r<rows;r++){const off=r%2?0:40;for(let x=-80+off;x<w;x+=80){g.fillStyle='#f6f5f1';g.beginPath();g.roundRect(x+3,r*rh+3,74,rh-6,10);g.fill();g.strokeStyle='rgba(0,0,0,.12)';g.lineWidth=2;g.stroke();g.fillStyle='rgba(40,80,150,.35)';g.fillRect(x+20,r*rh+rh*.42,36,4);}}});
+T.bolson=canvasTex(128,128,(g,w,h)=>{g.fillStyle='#f3f1ea';g.fillRect(0,0,w,h);g.strokeStyle='rgba(0,0,0,.06)';for(let i=0;i<w;i+=3){g.beginPath();g.moveTo(i,0);g.lineTo(i,h);g.stroke();}for(let i=0;i<h;i+=3){g.beginPath();g.moveTo(0,i);g.lineTo(w,i);g.stroke();}g.fillStyle='rgba(30,90,170,.5)';g.fillRect(0,h*.12,w,5);});
+T.box=canvasTex(256,256,(g,w,h)=>{g.fillStyle='#b8875a';g.fillRect(0,0,w,h);const rows=5,rh=h/rows;for(let r=0;r<rows;r++)for(let x=(r%2)*32;x<w;x+=64){g.fillStyle=r%2?'#c49466':'#b07f52';g.fillRect(x+2,r*rh+2,60,rh-4);g.fillStyle='#d9c08e';g.fillRect(x+2,r*rh+rh*.45,60,6);g.fillStyle='#c0392b';g.fillRect(x+10,r*rh+10,18,10);}});
+T.boxRed=canvasTex(256,256,(g,w,h)=>{g.fillStyle='#c8463c';g.fillRect(0,0,w,h);const rows=6,rh=h/rows;for(let r=0;r<rows;r++)for(let x=(r%2)*28;x<w;x+=56){g.fillStyle=r%2?'#d65a4c':'#bf3e35';g.fillRect(x+2,r*rh+2,52,rh-4);g.fillStyle='#f3d9a0';g.fillRect(x+8,r*rh+8,22,8);}});
+function floorText(txt,color='#f2c230',w=512,h=128){return canvasTex(w,h,(g)=>{g.clearRect(0,0,w,h);let fs=70;g.font='800 '+fs+'px Inter, Arial, sans-serif';while(g.measureText(txt).width>w*.94&&fs>20){fs-=2;g.font='800 '+fs+'px Inter, Arial, sans-serif';}g.textAlign='center';g.textBaseline='middle';g.fillStyle=color;g.globalAlpha=.92;g.fillText(txt,w/2,h/2+4);});}
+T.hatch=canvasTex(128,128,(g,w,h)=>{g.clearRect(0,0,w,h);g.strokeStyle='#f2c230';g.lineWidth=10;for(let i=-h;i<w;i+=40){g.beginPath();g.moveTo(i,h);g.lineTo(i+h,0);g.stroke();}},[6,6]);
+
+/* =====================================================================
+   Materiales
+   ===================================================================== */
+const M={
+  steel:new THREE.MeshStandardMaterial({color:0xaab0b7,metalness:1,roughness:.24,envMapIntensity:1.0}),
+  steelDull:new THREE.MeshStandardMaterial({color:0xb9bcc0,metalness:.9,roughness:.4}),
+  galv:new THREE.MeshStandardMaterial({color:0xbfc3c6,metalness:.85,roughness:.45}),
+  frame:new THREE.MeshStandardMaterial({color:0xb5652a,metalness:.3,roughness:.6}),
+  frameDark:new THREE.MeshStandardMaterial({color:0x4b5560,metalness:.4,roughness:.55}),
+  wood:new THREE.MeshStandardMaterial({color:0xb58d5c,roughness:.9}),
+  woodDark:new THREE.MeshStandardMaterial({color:0x8d6a43,roughness:.95}),
+  concrete:new THREE.MeshStandardMaterial({map:T.concrete,roughness:.92}),
+  grass:new THREE.MeshStandardMaterial({map:T.grass,roughness:1}),
+  asphalt:new THREE.MeshStandardMaterial({map:T.asphalt,roughness:.95}),
+  gravel:new THREE.MeshStandardMaterial({map:T.gravel,roughness:1}),
+  epoxy:new THREE.MeshStandardMaterial({map:T.epoxy,roughness:.18,metalness:.05,transparent:true,opacity:0,envMapIntensity:.9}),
+  wallCream:new THREE.MeshStandardMaterial({map:T.wallCream,transparent:true,opacity:.26,side:THREE.DoubleSide,depthWrite:false,roughness:.7}),
+  wallGrey:new THREE.MeshStandardMaterial({map:T.wallGrey,transparent:true,opacity:.3,side:THREE.DoubleSide,depthWrite:false,roughness:.7}),
+  roof:new THREE.MeshStandardMaterial({map:T.roof,side:THREE.DoubleSide,roughness:.55,metalness:.4}),
+  white:new THREE.MeshStandardMaterial({color:0xf0f0ee,roughness:.6}),
+  panel:new THREE.MeshStandardMaterial({color:0xe9ecef,roughness:.5,metalness:.1}),
+  blue:new THREE.MeshStandardMaterial({color:0x1f4e8c,roughness:.5,metalness:.3}),
+  orange:new THREE.MeshStandardMaterial({color:0xf07c19,roughness:.45,metalness:.3}),
+  yellow:new THREE.MeshStandardMaterial({color:0xf2b705,roughness:.5,metalness:.2}),
+  dark:new THREE.MeshStandardMaterial({color:0x22262b,roughness:.7}),
+  rubber:new THREE.MeshStandardMaterial({color:0x151515,roughness:.9}),
+  glass:new THREE.MeshStandardMaterial({color:0x9fc4d9,transparent:true,opacity:.35,roughness:.1,metalness:.2}),
+  copper:new THREE.MeshStandardMaterial({color:0xc4743f,metalness:1,roughness:.3}),
+  wrap:new THREE.MeshStandardMaterial({color:0xffffff,transparent:true,opacity:.22,roughness:.15,depthWrite:false}),
+  led:new THREE.MeshStandardMaterial({color:0xffffff,emissive:0xfff6e5,emissiveIntensity:.4}),
+  container:new THREE.MeshStandardMaterial({color:0xffffff,map:corrugated('#2c6e8f','#1f5671','#3a86ab'),roughness:.6,metalness:.3}),
+  leaf:new THREE.MeshStandardMaterial({color:0x3f6b2e,roughness:1}),
+  trunk:new THREE.MeshStandardMaterial({color:0x5b4632,roughness:1}),
+};
+const mCans=[0,1,2,3,4,5].map(i=>[2,3].includes(i)?new THREE.MeshStandardMaterial({map:T.cansTop,roughness:.7}):new THREE.MeshStandardMaterial({map:T.cansMix,roughness:.45,metalness:.2}));
+const mCansRed=[0,1,2,3,4,5].map(i=>[2,3].includes(i)?new THREE.MeshStandardMaterial({map:T.cansTop,roughness:.7}):new THREE.MeshStandardMaterial({map:T.cansRed,roughness:.45,metalness:.2}));
+const mBags=new THREE.MeshStandardMaterial({map:T.bags,roughness:.9});
+const mBolson=new THREE.MeshStandardMaterial({map:T.bolson,roughness:.95});
+const mBox=new THREE.MeshStandardMaterial({map:T.box,roughness:.85});
+const mBoxRed=new THREE.MeshStandardMaterial({map:T.boxRed,roughness:.8});
+
+/* Helpers de geometría */
+function box(w,h,d,mat,x=0,y=0,z=0,cast=true){const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);m.position.set(x,y,z);m.castShadow=cast;m.receiveShadow=true;return m;}
+function cyl(rt,rb,h,mat,x=0,y=0,z=0,seg=24){const m=new THREE.Mesh(new THREE.CylinderGeometry(rt,rb,h,seg),mat);m.position.set(x,y,z);m.castShadow=true;m.receiveShadow=true;return m;}
+const _v=new THREE.Vector3();
+function beam(a,b,t,mat,cast=true){const len=a.distanceTo(b);const m=new THREE.Mesh(new THREE.BoxGeometry(t,t,len),mat);m.position.copy(a).add(b).multiplyScalar(.5);m.lookAt(b);m.castShadow=cast;m.receiveShadow=true;return m;}
+function plane(w,d,mat,x,y,z){const m=new THREE.Mesh(new THREE.PlaneGeometry(w,d),mat);m.rotation.x=-Math.PI/2;m.position.set(x,y,z);m.receiveShadow=true;return m;}
+
+/* =====================================================================
+   Terreno y entorno
+   ===================================================================== */
+const world=new THREE.Group();scene.add(world);
+const ground=plane(420,420,M.grass,26,-0.02,30);world.add(ground);
+world.add(plane(64,58,M.gravel,26,-0.01,30));                         // patio general
+const road=plane(9,120,M.asphalt,60,0.0,-14);world.add(road);         // acceso desde la calle
+world.add(plane(26,9,M.asphalt,52,0.005,11));                          // playa de maniobras frente al portón
+world.add(plane(22,16,M.asphalt,60,0.004,40));                         // estacionamiento
+function tree(x,z,s=1){const g=new THREE.Group();g.add(cyl(.18*s,.25*s,2.4*s,M.trunk,0,1.2*s,0,8));const c=new THREE.Mesh(new THREE.IcosahedronGeometry(2.1*s,1),M.leaf);c.position.y=3.6*s;c.castShadow=true;g.add(c);const c2=c.clone();c2.scale.setScalar(.75);c2.position.set(.9*s,4.4*s,.4*s);g.add(c2);g.position.set(x,0,z);world.add(g);}
+[[4,32,1.2],[9,35,1],[14,31,1.1],[-12,10,1.3],[-10,24,1],[-14,40,1.2],[70,30,1],[72,50,1.1],[-6,64,1.3],[30,72,1.1],[50,70,1],[-16,-8,1.2]].forEach(a=>tree(...a));
+
+/* =====================================================================
+   Naves (galpones de pórticos metálicos)
+   ===================================================================== */
+const roofs=new THREE.Group();scene.add(roofs);roofs.visible=false;
+const walls=[];
+const leds=[];
+function shed({x0,x1,z0,z1,eave,ridge,frames,wallMat,frameMat,ledRows=2}){
+  const g=new THREE.Group();const zc=(z0+z1)/2;
+  for(const x of frames){
+    g.add(box(.3,eave,.45,frameMat,x,eave/2,z0+.2));
+    g.add(box(.3,eave,.45,frameMat,x,eave/2,z1-.2));
+    g.add(beam(new THREE.Vector3(x,eave,z0+.2),new THREE.Vector3(x,ridge,zc),.32,frameMat));
+    g.add(beam(new THREE.Vector3(x,eave,z1-.2),new THREE.Vector3(x,ridge,zc),.32,frameMat));
+  }
+  // correas
+  for(let k=0;k<=4;k++){const t=k/4;
+    const y=lerp(eave,ridge,t);const za=lerp(z0+.2,zc,t),zb=lerp(z1-.2,zc,t);
+    g.add(box(x1-x0,.12,.1,frameMat,(x0+x1)/2,y+.18,za,false));
+    if(k<4)g.add(box(x1-x0,.12,.1,frameMat,(x0+x1)/2,y+.18,zb,false));}
+  // muros longitudinales
+  const L=x1-x0,W=z1-z0;
+  const addWall=(m,nx,nz)=>{m.material=wallMat.clone();m.userData.base=wallMat.opacity;walls.push({m,n:new THREE.Vector3(nx,0,nz),box:{x0,x1,z0,z1}});g.add(m);};
+  addWall(new THREE.Mesh(new THREE.PlaneGeometry(L,eave)).translateX((x0+x1)/2).translateY(eave/2).translateZ(z0),0,-1);
+  addWall(new THREE.Mesh(new THREE.PlaneGeometry(L,eave)).translateX((x0+x1)/2).translateY(eave/2).translateZ(z1),0,1);
+  // hastiales
+  const sh=new THREE.Shape();sh.moveTo(-W/2,0);sh.lineTo(W/2,0);sh.lineTo(W/2,eave);sh.lineTo(0,ridge);sh.lineTo(-W/2,eave);sh.closePath();
+  const gg=new THREE.ShapeGeometry(sh);
+  for(const x of [x0,x1]){const m=new THREE.Mesh(gg);m.rotation.y=Math.PI/2;m.position.set(x,0,zc);addWall(m,x===x0?-1:1,0);}
+  // cubiertas (opcionales)
+  const slope=Math.hypot(W/2,ridge-eave);
+  for(const s of [-1,1]){const r=new THREE.Mesh(new THREE.PlaneGeometry(L+.6,slope+.4),M.roof);
+    r.position.set((x0+x1)/2,(eave+ridge)/2+.25,zc+s*W/4);r.rotation.x=-Math.PI/2+s*Math.atan2(ridge-eave,W/2);
+    r.receiveShadow=true;roofs.add(r);}
+  // luminarias LED
+  for(let r=0;r<ledRows;r++){const z=lerp(z0,z1,(r+1)/(ledRows+1));
+    for(let x=x0+3;x<x1-1;x+=6){const l=box(1.2,.06,.3,M.led,x,eave-.3,z,false);leds.push(l);g.add(l);}}
+  world.add(g);return g;
+}
+/* Maltería: 48,0 × 21,9 m (8 vanos de ~5,9 m) */
+const MAL={x0:0,x1:48,z0:0,z1:21.9};
+shed({...MAL,eave:7,ridge:9.4,frames:[0,5.85,11.75,17.65,23.55,29.45,35.35,41.25,48],wallMat:M.wallCream,frameMat:M.frame,ledRows:3});
+world.add(plane(48,21.9,M.concrete,24,0.01,10.95));
+/* Cervecería: 15,9 × 33,4 m */
+const CER={x0:10.9,x1:44.3,z0:45.9,z1:61.8};
+shed({...CER,eave:6.2,ridge:8.0,frames:[10.9,16.47,22.04,27.6,33.17,38.74,44.3],wallMat:M.wallGrey,frameMat:M.frameDark,ledRows:2});
+world.add(plane(33.4,15.9,M.concrete,27.6,0.01,53.85));
+/* Destilería 15,3 × 6,0 m */
+shed({x0:4.9,x1:10.9,z0:46.2,z1:61.5,eave:4.6,ridge:5.4,frames:[4.9,10.9],wallMat:M.wallGrey,frameMat:M.frameDark,ledRows:1});
+world.add(plane(6,15.3,M.concrete,7.9,0.01,53.85));
+/* Depósito de cajas 9,3 × 12,0 m y servicios */
+const DEP={x0:37,x1:46.3,z0:33.9,z1:45.9};
+shed({...DEP,eave:3.8,ridge:4.6,frames:[37,46.3],wallMat:M.wallGrey,frameMat:M.frameDark,ledRows:1});
+world.add(plane(9.3,12,M.concrete,41.65,0.01,39.9));
+const serv=box(6,3.2,7.9,new THREE.MeshStandardMaterial({color:0xd9d4c7,roughness:.8}),34,1.6,41.95);world.add(serv);
+/* Contenedores (maltas especiales) */
+function container(x,z,ry=0){const g=new THREE.Group();const b=box(12.19,2.59,2.44,M.container,0,1.3,0);g.add(b);
+  g.position.set(x,0,z);g.rotation.y=ry;world.add(g);}
+container(43.2,31.9);
+
+/* =====================================================================
+   Equipos de proceso
+   ===================================================================== */
+function ctank({x,z,r=1,cyl:hc=3,cone=1,leg=1,mat=M.steel,platform=false}){
+  const g=new THREE.Group();
+  const pts=[new THREE.Vector2(0.05,0),new THREE.Vector2(r,cone),new THREE.Vector2(r,cone+hc),new THREE.Vector2(r*.75,cone+hc+r*.25),new THREE.Vector2(r*.2,cone+hc+r*.35),new THREE.Vector2(0,cone+hc+r*.35)];
+  const m=new THREE.Mesh(new THREE.LatheGeometry(pts,40),mat);m.position.y=leg;m.castShadow=true;m.receiveShadow=true;g.add(m);
+  for(let i=0;i<4;i++){const a=i*Math.PI/2+Math.PI/4;g.add(cyl(.05,.05,leg+cone*.6,M.steelDull,Math.cos(a)*r*.82,(leg+cone*.6)/2,Math.sin(a)*r*.82,10));}
+  g.add(cyl(r*1.005,r*1.005,.05,M.steelDull,0,leg+cone+hc*.3,0,40));
+  g.add(cyl(r*1.005,r*1.005,.05,M.steelDull,0,leg+cone+hc*.7,0,40));
+  if(platform){const ph=leg+cone+hc;g.add(box(r*2.6,.08,r*2.6,M.steelDull,0,ph-.1,0));}
+  g.position.set(x,0,z);world.add(g);return g;
+}
+function stairs(x,z,h,ry=0,len=4){const g=new THREE.Group();const n=Math.round(h/.2);for(let i=0;i<n;i++){g.add(box(.9,.04,.28,M.steelDull,0,(i+1)*h/n,-len/2+i*len/n,false));}
+  g.add(beam(new THREE.Vector3(-.48,0,-len/2-.2),new THREE.Vector3(-.48,h,len/2),.08,M.steelDull));g.add(beam(new THREE.Vector3(.48,0,-len/2-.2),new THREE.Vector3(.48,h,len/2),.08,M.steelDull));
+  g.add(beam(new THREE.Vector3(-.48,1,-len/2-.2),new THREE.Vector3(-.48,h+1,len/2),.04,M.steelDull));g.add(beam(new THREE.Vector3(.48,1,-len/2-.2),new THREE.Vector3(.48,h+1,len/2),.04,M.steelDull));
+  g.position.set(x,0,z);g.rotation.y=ry;world.add(g);}
+function railing(g,x0,x1,z0,z1,y){const s=new THREE.Vector3(),e=new THREE.Vector3();[[x0,z0,x1,z0],[x1,z0,x1,z1],[x1,z1,x0,z1],[x0,z1,x0,z0]].forEach(([a,b,c,d])=>{g.add(beam(s.set(a,y+1,b).clone(),e.set(c,y+1,d).clone(),.05,M.steelDull,false));});}
+
+/* --- Cervecería (según planta general) --- */
+// Fermentadores 10.000 L (columna oeste) y tanques de maduración
+[26.4,24.1,21.8,19.7,17.6].forEach(x=>ctank({x,z:47.4,r:1.05,cyl:3.4,cone:.9,leg:.9}));
+[26.2,24.2,22.5,20.8,19.2].forEach(x=>ctank({x,z:50.1,r:.85,cyl:2.9,cone:.75,leg:.85}));
+// Sala de cocimiento (Quadriblock ~2.500 L) sobre plataforma
+{const g=new THREE.Group();world.add(g);
+ [[25.3,54.4],[25.3,57.5],[22.9,54.4],[22.9,57.5]].forEach(([x,z])=>ctank({x,z,r:.95,cyl:1.6,cone:.4,leg:.5,mat:M.steel}));
+ const pf=box(4.8,.1,5.3,M.steelDull,24.1,2.5,55.95);world.add(pf);
+ const rg=new THREE.Group();railing(rg,21.7,26.5,53.3,58.6,2.5);world.add(rg);
+ for(const [x,z] of [[21.7,53.3],[26.5,53.3],[21.7,58.6],[26.5,58.6]])world.add(cyl(.05,.05,2.5,M.steelDull,x,1.25,z,8));
+ stairs(24.1,51.2,2.5,0,2.6);}
+ctank({x:17.9,z:58.2,r:1.05,cyl:2.8,cone:.5,leg:.6});
+ctank({x:18.6,z:60.0,r:.35,cyl:1.2,cone:.2,leg:.4});ctank({x:17.3,z:60.2,r:.35,cyl:1.2,cone:.2,leg:.4});
+// Bodega de tanques (dos filas)
+[47.2,49.3,51.4,57.2,59.6].forEach(z=>ctank({x:15.1,z,r:1.0,cyl:3.2,cone:.8,leg:.8}));
+[47.2,49.3,51.4,53.5,55.6,57.7,59.8].forEach(z=>ctank({x:12.4,z,r:.98,cyl:3.2,cone:.8,leg:.8}));
+// Cámara de frío y laboratorio
+world.add(box(6.8,3,3.8,M.panel,31.2,1.5,59.75));
+// Molinos
+world.add(cyl(.45,.45,1.6,M.steelDull,34.6,0.8,46.6,16));world.add(cyl(.45,.45,1.6,M.steelDull,33.4,0.8,46.6,16));
+// Línea de envasado (enjuagadora-llenadora-tapadora y transportadores)
+const ENV={x:37.1,z0:47.2,z1:56.8};
+{world.add(box(.5,.9,ENV.z1-ENV.z0,M.steelDull,ENV.x,.45,(ENV.z0+ENV.z1)/2));
+ world.add(box(.42,.05,ENV.z1-ENV.z0,M.dark,ENV.x,.92,(ENV.z0+ENV.z1)/2,false));
+ const mach=[[49.6,1.6,1.7,'Llenadora'],[52.0,1.3,1.4],[54.9,1.2,1.2]];
+ mach.forEach(([z,w,h])=>{world.add(box(w,h,w,M.steel,ENV.x,h/2,z));world.add(box(w*1.02,.6,w*1.02,M.glass,ENV.x,h+.3,z,false));});
+ // panel HMI
+ world.add(box(.1,.6,.5,M.dark,ENV.x+1.1,1.4,50.2));world.add(cyl(.04,.04,1.1,M.steelDull,ENV.x+1.1,.55,50.2,8));
+ // túnel de pasteurización
+ world.add(box(1.9,1.8,6.2,M.steel,30.2,.9,53.4));
+ for(let z=50.5;z<=56.3;z+=1.2)world.add(box(1.95,.06,.06,M.steelDull,30.2,1.82,z,false));
+ world.add(box(.45,.9,2.5,M.steelDull,30.2,.45,49.1));
+ world.add(beam(new THREE.Vector3(30.2,.92,47.8),new THREE.Vector3(36.8,.92,47.8),.4,M.steelDull));
+ // estantería del muro oeste
+ for(let x=30.4;x<36.4;x+=1.8){const s=new THREE.Group();s.add(box(1.7,.05,1.1,M.blue,0,.4,0));s.add(box(1.7,.05,1.1,M.blue,0,1.4,0));s.add(box(1.7,.05,1.1,M.blue,0,2.4,0));
+   for(const [a,b] of [[-.83,-.5],[.83,-.5],[-.83,.5],[.83,.5]])s.add(box(.06,2.6,.06,M.blue,a,1.3,b));
+   s.add(box(1.5,.7,.9,mBox,0,.78,0));s.add(box(1.5,.7,.9,mBox,0,1.78,0));s.position.set(x,0,46.6);world.add(s);}}
+// Destilería: alambique de cobre y tanques
+{world.add(cyl(.9,1.0,1.6,M.copper,8.2,.8,52.5,28));const d=new THREE.Mesh(new THREE.SphereGeometry(.92,24,12,0,Math.PI*2,0,Math.PI/2),M.copper);d.position.set(8.2,1.6,52.5);d.castShadow=true;world.add(d);
+ world.add(cyl(.22,.22,3.4,M.copper,8.2,3.3,54.0,16));world.add(beam(new THREE.Vector3(8.2,2.5,52.5),new THREE.Vector3(8.2,4.4,54.0),.14,M.copper));
+ [48.0,49.6,58.5,60.0].forEach(z=>ctank({x:6.6,z,r:.55,cyl:1.5,cone:.3,leg:.4}));}
+
+/* --- Maltería: zona de proceso (x 0–16) --- */
+{// tanques de remojo con plataforma y escalera
+ ctank({x:4.2,z:5.0,r:1.6,cyl:2.2,cone:1.4,leg:1.6,platform:false});ctank({x:9.0,z:5.0,r:1.6,cyl:2.2,cone:1.4,leg:1.6});
+ const py=5.2;world.add(box(9.6,.1,1.4,M.steelDull,6.6,py,7.3));const rg=new THREE.Group();railing(rg,1.8,11.4,6.6,8.0,py);world.add(rg);
+ for(const x of [1.9,6.6,11.3])world.add(cyl(.05,.05,py,M.steelDull,x,py/2,7.95,8));
+ stairs(12.2,9.6,py,Math.PI,5.2);
+ // caja de germinación y conducto horizontal
+ world.add(box(9,1.3,4.2,M.steelDull,6.6,.65,14.2));
+ world.add(cyl(.45,.45,15,M.steel,8.5,4.2,11.0,20).rotateZ(Math.PI/2));
+ world.add(cyl(.4,.4,4.2,M.steel,1.2,2.1,11.0,16));
+ // tolva (horno) sobre columnas
+ {const g=new THREE.Group();const top=box(3.2,1.6,3.2,M.white,0,5.0,0);g.add(top);
+  const hop=new THREE.Mesh(new THREE.CylinderGeometry(2.25,.25,2.4,4,1),M.white);hop.rotation.y=Math.PI/4;hop.position.y=3.0;hop.castShadow=true;g.add(hop);
+  for(const [a,b] of [[-1.5,-1.5],[1.5,-1.5],[-1.5,1.5],[1.5,1.5]])g.add(box(.18,4.2,.18,M.frameDark,a,2.1,b));
+  g.position.set(14.0,0,4.4);world.add(g);}
+ // ensacadora y cinta
+ world.add(box(1.2,2.2,1.2,M.white,14.6,1.1,18.6));world.add(box(.6,1.2,.6,M.steelDull,14.6,2.6,18.6));
+ world.add(box(4.2,.15,.6,M.dark,12.2,.75,18.6));world.add(box(4.2,.6,.5,M.steelDull,12.2,.38,18.6));
+ // transportador inclinado de cadena
+ world.add(beam(new THREE.Vector3(15.6,.6,9.5),new THREE.Vector3(15.6,5.6,4.6),.45,M.steelDull));}
+/* Silos externos (chapa galvanizada) */
+function silo(x,z){const g=new THREE.Group();const r=2.3;
+  const pts=[new THREE.Vector2(.25,0),new THREE.Vector2(r,2.0),new THREE.Vector2(r,7.0),new THREE.Vector2(.3,8.6),new THREE.Vector2(0,8.7)];
+  const m=new THREE.Mesh(new THREE.LatheGeometry(pts,40),M.galv);m.position.y=2.4;m.castShadow=true;g.add(m);
+  for(let y=4.6;y<9.4;y+=.5)g.add(cyl(r*1.01,r*1.01,.04,M.steelDull,0,y,0,40));
+  for(let i=0;i<6;i++){const a=i*Math.PI/3;g.add(box(.16,4.6,.16,M.galv,Math.cos(a)*r*.95,2.3,Math.sin(a)*r*.95));}
+  g.add(box(.5,9,.06,M.yellow,r+.15,6.2,0));g.position.set(x,0,z);world.add(g);}
+silo(-.8,-4.8);silo(5.9,-4.9);
+
+/* =====================================================================
+   Cargas: pallets, bolsones, barriles
+   ===================================================================== */
+const geoPallet=new THREE.BoxGeometry(1.0,.14,1.2);
+const KIND={
+  cans:{h:1.35,make:()=>{const b=new THREE.Mesh(new THREE.BoxGeometry(.98,1.21,1.18),mCans);b.position.y=.14+.605;return b;}},
+  red:{h:1.45,make:()=>{const g=new THREE.Group();const b=new THREE.Mesh(new THREE.BoxGeometry(.98,1.3,1.18),mCansRed);b.position.y=.14+.65;g.add(b);const w=new THREE.Mesh(new THREE.BoxGeometry(1.02,1.33,1.22),M.wrap);w.position.y=.14+.66;g.add(w);return g;}},
+  bags:{h:1.2,make:()=>{const b=new THREE.Mesh(new THREE.BoxGeometry(.98,1.06,1.18),mBags);b.position.y=.14+.53;return b;}},
+  boxes:{h:1.3,make:()=>{const b=new THREE.Mesh(new THREE.BoxGeometry(.96,1.16,1.16),mBox);b.position.y=.14+.58;return b;}},
+  boxesRed:{h:1.45,make:()=>{const b=new THREE.Mesh(new THREE.BoxGeometry(.96,1.3,1.16),mBoxRed);b.position.y=.14+.65;return b;}},
+  bolson:{h:1.3,make:()=>{const g=new THREE.Group();const geo=new THREE.BoxGeometry(.98,1.06,.98,2,2,2);const p=geo.attributes.position;for(let i=0;i<p.count;i++){const y=p.getY(i);if(Math.abs(p.getX(i))<.1||Math.abs(p.getZ(i))<.1){p.setX(i,p.getX(i)*1.06);p.setZ(i,p.getZ(i)*1.06);} if(y>.5){p.setX(i,p.getX(i)*.92);p.setZ(i,p.getZ(i)*.92);}}geo.computeVertexNormals();
+    const b=new THREE.Mesh(geo,mBolson);b.position.y=.14+.53;g.add(b);for(const [a,c] of [[-.4,-.4],[.4,-.4],[-.4,.4],[.4,.4]]){const l=new THREE.Mesh(new THREE.TorusGeometry(.09,.02,6,12,Math.PI),mBolson);l.position.set(a,1.25,c);g.add(l);}return g;}},
+  empty:{h:.75,make:()=>{const g=new THREE.Group();for(let i=1;i<5;i++){const p=new THREE.Mesh(geoPallet,i%2?M.wood:M.woodDark);p.position.y=i*.15+.07;p.rotation.y=jit(.06);g.add(p);}return g;}},
+};
+const units=[];
+function makeUnit(kind,zone){const g=new THREE.Group();const p=new THREE.Mesh(geoPallet,M.wood);p.position.y=.07;g.add(p);g.add(KIND[kind].make());
+  g.traverse(o=>{if(o.isMesh){o.castShadow=true;o.receiveShadow=true;}});scene.add(g);
+  const u={g,kind,zone,h:KIND[kind].h,tg:{}};units.push(u);return u;}
+const S=(x,y,z,ry=0,extra={})=>({x,y,z,ry,...extra});
+
+/* ---------- Estado actual (según fotos de la visita) ---------- */
+// 1) Fila de pallets de latas a fasón contra el muro sudoeste, en bloque y a dos alturas
+const cans=[];
+for(let i=0;i<19;i++){for(let l=0;l<2;l++){const u=makeUnit('cans','mal');u.tg.actual=S(22.4+i*1.27+jit(.04),l*1.36,20.95+jit(.05),Math.PI/2+jit(.03),{stack:l});cans.push(u);}}
+// dos pallets de latas sueltos en el pasillo, cerca del portón
+{let u=makeUnit('cans','mal');u.tg.actual=S(44.2,0,15.6,.35);cans.push(u);u=makeUnit('cans','mal');u.tg.actual=S(42.6,0,17.4,-.2);cans.push(u);}
+// 2) Bolsones de malta, en grupos irregulares en el centro de la nave
+const bols=[];
+const bolPos=[[25.5,8.6],[26.7,8.8],[27.9,8.5],[25.6,9.9],[26.8,10.1],[31.0,12.2],[32.2,12.0],[33.4,12.3],[31.1,13.4],[32.3,13.5],[36.8,9.4],[38.0,9.2],[36.9,10.7],[29.2,4.2],[30.4,4.1],[31.6,4.3],[34.4,16.2],[35.6,16.4]];
+bolPos.forEach(([x,z])=>{const u=makeUnit('bolson','mal');u.tg.actual=S(x+jit(.08),0,z+jit(.08),jit(.25));bols.push(u);});
+// 3) Pallets de bolsas de malta (dos alturas)
+const bags=[];
+const bagPos=[[33.0,3.0],[34.3,3.1],[35.6,3.0],[36.9,3.2],[33.1,4.6],[34.4,4.6],[38.6,6.3],[39.9,6.0],[27.5,14.6],[28.8,14.8],[40.5,12.2],[41.8,12.6]];
+bagPos.forEach(([x,z],i)=>{for(let l=0;l<2;l++){const u=makeUnit('bags','mal');u.tg.actual=S(x+jit(.06),l*1.21,z+jit(.06),Math.PI/2+jit(.12),{stack:l});bags.push(u);}});
+// 4) Cajas, botellas y pallets vacíos junto al portón (bloquean el acceso)
+const misc=[];
+[[45.3,8.4,1],[46.5,9.6,0],[44.9,11.2,1],[46.2,12.8,0],[43.6,9.9,0],[45.0,13.9,1],[42.4,7.6,0],[40.6,9.8,0]].forEach(([x,z,two])=>{for(let l=0;l<=two;l++){const u=makeUnit('boxes','mal');u.tg.actual=S(x+jit(.1),l*1.31,z+jit(.1),jit(.5),{stack:l});misc.push(u);}});
+const emptyP=[];
+[[46.6,3.1],[45.3,3.4],[46.6,4.6],[44.0,5.1],[39.0,15.8],[23.3,9.6]].forEach(([x,z])=>{const u=makeUnit('empty','mal');u.tg.actual=S(x,0,z,jit(.6));emptyP.push(u);});
+// 5) Depósito de cajas: pallets de latas envueltos y cajas hasta el techo
+const depU=[];
+[[38.2,35.2,1],[39.5,35.3,1],[40.8,35.1,0],[38.3,36.8,1],[39.6,36.9,0],[44.9,35.4,1],[44.9,37.0,0],[41.9,39.2,0],[43.2,40.3,0],[38.4,43.8,1]].forEach(([x,z,two])=>{for(let l=0;l<=two;l++){const u=makeUnit('red','dep');u.tg.actual=S(x+jit(.06),l*1.46,z+jit(.06),jit(.15),{stack:l});depU.push(u);}});
+[[44.8,42.6,1],[44.9,44.3,1],[41.6,44.2,0],[40.2,41.4,0]].forEach(([x,z,two])=>{for(let l=0;l<=two;l++){const u=makeUnit('boxesRed','dep');u.tg.actual=S(x+jit(.06),l*1.46,z+jit(.06),jit(.3),{stack:l});depU.push(u);}});
+// 6) Zona cervecería: cajas de botellas junto a la línea de envasado
+const cerU=[];
+[[39.6,49.0],[40.9,49.3],[39.8,51.8],[41.6,55.6],[38.9,57.6]].forEach(([x,z])=>{const u=makeUnit('boxes','cer');u.tg.actual=S(x,0,z,jit(.5));cerU.push(u);});
+
+/* Barriles retornables (instanciados): columnas de 5 alturas, como en las fotos */
+const KEG_N=96;
+const kegPts=[new THREE.Vector2(0,0),new THREE.Vector2(.2,0),new THREE.Vector2(.205,.04),new THREE.Vector2(.205,.56),new THREE.Vector2(.2,.6),new THREE.Vector2(0,.6)];
+const kegGeo=new THREE.LatheGeometry(kegPts,18);
+const kegMesh=new THREE.InstancedMesh(kegGeo,M.steel,KEG_N);kegMesh.castShadow=true;kegMesh.receiveShadow=true;
+const ringMesh=new THREE.InstancedMesh(new THREE.CylinderGeometry(.208,.208,.06,18),new THREE.MeshStandardMaterial({roughness:.5}),KEG_N);
+kegMesh.frustumCulled=false;ringMesh.frustumCulled=false;scene.add(kegMesh,ringMesh);
+const kegs=[];const ringCols=[0x2f6fd6,0xf28a1e,0x2f6fd6,0x3aa35a,0x2f6fd6];
+for(let i=0;i<KEG_N;i++){ringMesh.setColorAt(i,new THREE.Color(ringCols[i%ringCols.length]));const k={i,tg:{}};kegs.push(k);}
+{let i=0;
+ // bloque principal: 16 columnas × 5 alturas
+ for(let cx=0;cx<4;cx++)for(let cz=0;cz<4;cz++)for(let l=0;l<5;l++){if(i>=80)break;kegs[i].tg.actual=S(17.9+cx*.43+jit(.015),l*.61,9.6+cz*.43+jit(.015),0,{stack:l});i++;}
+ // barriles sueltos invadiendo el pasillo
+ while(i<KEG_N){const n=i-80;kegs[i].tg.actual=S(20.0+(n%4)*.48+jit(.05),Math.floor(n/8)*.61,9.2+Math.floor(n/4)%2*.5+jit(.05),0,{stack:Math.floor(n/8)});i++;}}
+
+/* Autoelevadores */
+function forklift(bodyMat,accent){const g=new THREE.Group();
+  g.add(box(1.2,.9,2.0,bodyMat,0,.75,0));g.add(box(1.1,.6,.7,M.dark,0,1.2,-.85));
+  g.add(box(1.0,.5,.6,accent,0,1.0,.55));
+  for(const [x,z] of [[-.55,.6],[.55,.6],[-.55,-.65],[.55,-.65]]){const w=cyl(.28,.28,.22,M.rubber,x,.28,z,16);w.rotation.z=Math.PI/2;g.add(w);}
+  for(const x of [-.5,.5])g.add(box(.08,2.2,.08,M.dark,x,1.85,-.1));g.add(box(1.1,.08,1.0,M.dark,0,2.2,-.5));
+  for(const x of [-.4,.4])g.add(box(.09,2.6,.12,M.dark,x,1.35,1.05));
+  const fk=new THREE.Group();fk.add(box(.9,.5,.06,M.dark,0,.35,1.15));for(const x of [-.25,.25])fk.add(box(.12,.05,1.1,M.dark,x,.1,1.7));g.add(fk);g.userData.forks=fk;
+  g.traverse(o=>{if(o.isMesh){o.castShadow=true;}});scene.add(g);return g;}
+const fkOld=forklift(new THREE.MeshStandardMaterial({color:0xe2b11d,roughness:.5}),M.dark); // combustión
+fkOld.position.set(36.4,0,10.8);fkOld.rotation.y=-.6;
+const fkNew=forklift(new THREE.MeshStandardMaterial({color:0xe9ecef,roughness:.4,metalness:.2}),M.blue); // eléctrico
+fkNew.position.set(23,0,9.3);fkNew.rotation.y=Math.PI/2;fkNew.scale.setScalar(0.001);fkNew.visible=false;
+
+/* Camión (excedente hacia el operador logístico) */
+const truck=new THREE.Group();
+{truck.add(box(8.6,2.7,2.5,new THREE.MeshStandardMaterial({color:0xf3f3f3,roughness:.5}),0,2.25,0));
+ truck.add(box(.1,2.5,2.3,M.dark,-4.31,2.25,0,false));
+ truck.add(box(2.4,2.4,2.4,new THREE.MeshStandardMaterial({color:0x1f4e8c,roughness:.4,metalness:.3}),5.6,1.9,0));
+ truck.add(box(.06,.9,2.1,M.glass,6.81,2.4,0,false));
+ for(const x of [-3,-1.8,4.9])for(const z of [-1.05,1.05]){const w=cyl(.48,.48,.35,M.rubber,x,.48,z,18);w.rotation.x=Math.PI/2;truck.add(w);}
+ truck.add(box(10.5,.25,2.3,M.dark,.9,.85,0));
+ truck.traverse(o=>{if(o.isMesh)o.castShadow=true;});}
+const TRUCK_HOME=new THREE.Vector3(53.0,0,11.0);
+truck.position.copy(TRUCK_HOME);truck.visible=false;scene.add(truck);
+
+/* =====================================================================
+   Propuesta: racks selectivos, jaulas, zonas y señalización
+   ===================================================================== */
+const opt=new THREE.Group();scene.add(opt);   // elementos que aparecen en la propuesta
+const optMats=[];                              // materiales con opacidad animable
+function fadeMat(m){const c=m.clone();c.transparent=true;c.opacity=0;optMats.push(c);return c;}
+const rUp=fadeMat(M.blue), rBeam=fadeMat(M.orange), cageMat=fadeMat(M.galv);
+const LV=[0,1.6,3.2];                          // niveles de carga (piso + 2 niveles de vigas)
+const BAY=2.7, RX0=24.0, NB=6;                 // racks: x 24,0–40,2 (6 vanos)
+// Filas de racks (z de la cara frontal, sentido hacia el pasillo)
+const ROWS=[{z0:.4,face:+1},{z0:4.9,face:-1},{z0:6.2,face:+1},{z0:11.3,face:-1},{z0:12.6,face:+1},{z0:17.1,face:-1}];
+const rackSlots=[];
+const GEO={up:[],beam:[],cage:[]};
+function gpush(arr,w,h,d,x,y,z){const g=new THREE.BoxGeometry(w,h,d);g.translate(x,y,z);arr.push(g);}
+function buildRackRow(x0,nb,z0,face,store){const D=1.1;const zc=z0+D/2;
+  for(let b=0;b<=nb;b++){const x=x0+b*BAY;for(const zz of [z0+.04,z0+D-.04])gpush(GEO.up,.08,4.7,.08,x,2.35,zz);
+    for(let y=.3;y<4.6;y+=.6)gpush(GEO.up,.04,.04,D,x,y,zc);}
+  for(let b=0;b<nb;b++){const xa=x0+b*BAY;
+    for(const y of [1.5,3.1,4.65])for(const zz of [z0+.06,z0+D-.06])gpush(GEO.beam,BAY,.12,.06,xa+BAY/2,y,zz);
+    for(const L of LV)for(const k of [0,1]){store.push({x:xa+.7+k*1.3,y:L===0?0:L,z:zc,face,used:false});}}
+}
+const racksMal=new THREE.Group();opt.add(racksMal);
+ROWS.forEach(r=>buildRackRow(RX0,NB,r.z0,r.face,rackSlots));
+// Depósito de cajas: dos filas de racks contra los muros largos
+const racksDep=new THREE.Group();opt.add(racksDep);const depSlots=[];
+buildRackRow(37.6,3,34.1,+1,depSlots);   // contra muro noreste (cara hacia el pasillo central)
+buildRackRow(37.6,3,44.6,-1,depSlots);   // contra muro sudoeste
+const cages=[];
+let _cg=[0,0,0];function cbar(w,h,d,x,y,z){gpush(GEO.cage,w,h,d,x+_cg[0],y+_cg[1],z+_cg[2]);return new THREE.Object3D();}
+/* Señalización en piso (pasillos amarillos, vía peatonal verde, zonas rayadas) */
+const marks=new THREE.Group();opt.add(marks);
+const mkY=fadeMat(new THREE.MeshStandardMaterial({color:0xf2c230,roughness:.5,emissive:0x2a2000}));
+const mkG=fadeMat(new THREE.MeshStandardMaterial({color:0x2fbf71,roughness:.5,emissive:0x002a10}));
+const mkGfill=fadeMat(new THREE.MeshStandardMaterial({color:0x2fbf71,roughness:.6}));
+function line(x0,z0,x1,z1,mat,w=.12,y=.03){const L=Math.hypot(x1-x0,z1-z0);const m=new THREE.Mesh(new THREE.PlaneGeometry(L,w),mat);m.rotation.x=-Math.PI/2;m.rotation.z=-Math.atan2(z1-z0,x1-x0);m.position.set((x0+x1)/2,y,(z0+z1)/2);m.receiveShadow=true;marks.add(m);}
+function rectLine(x0,z0,x1,z1,mat,w){line(x0,z0,x1,z0,mat,w);line(x1,z0,x1,z1,mat,w);line(x1,z1,x0,z1,mat,w);line(x0,z1,x0,z0,mat,w);}
+// bordes de las filas de racks
+ROWS.forEach(r=>rectLine(RX0-.15,r.z0-.15,RX0+NB*BAY+.15,r.z0+1.25,mkY));
+// vía peatonal / evacuación (sudoeste) y salida de emergencia
+const walk=new THREE.Mesh(new THREE.PlaneGeometry(30.4,1.5),mkGfill);walk.rotation.x=-Math.PI/2;walk.position.set(32.4,.025,20.5);marks.add(walk);
+line(17.2,19.7,47.6,19.7,mkG,.14);line(17.2,21.25,47.6,21.25,mkG,.14);
+for(let x=18;x<47;x+=3){line(x,20.15,x+1.3,20.85,mkG,.25);}
+// zonas: jaulas de barriles, bolsones, recepción/despacho, pallets vacíos
+rectLine(17.1,.6,20.4,8.3,mkY,.1);rectLine(17.1,11.4,20.4,19.4,mkY,.1);rectLine(40.8,2.0,47.5,18.6,mkY,.14);rectLine(44.6,.4,47.6,1.9,mkY,.1);
+const hatchMat=fadeMat(new THREE.MeshBasicMaterial({map:T.hatch,transparent:true,depthWrite:false}));
+{const h=new THREE.Mesh(new THREE.PlaneGeometry(6.4,2.2),hatchMat);h.rotation.x=-Math.PI/2;h.position.set(44.2,.028,16.9);marks.add(h);}
+function ftext(txt,x,z,w=5,rot=0,color){const mat=fadeMat(new THREE.MeshBasicMaterial({map:floorText(txt,color),transparent:true,depthWrite:false}));const m=new THREE.Mesh(new THREE.PlaneGeometry(w,w/4),mat);m.rotation.x=-Math.PI/2;m.rotation.z=rot;m.position.set(x,.032,z);marks.add(m);}
+ftext('RECEPCIÓN · DESPACHO',44.2,10.4,6.2,Math.PI/2);ftext('RETORNO DE BARRILES',18.75,4.5,3.6,Math.PI/2);ftext('PREPARACIÓN',18.75,15.4,3.2,Math.PI/2);ftext('PASILLO PRINCIPAL',32.1,9.3,6,0);
+ftext('SALIDA',48.6,20.5,2.4,Math.PI/2,'#2fbf71');ftext('PALLETS VACÍOS',46.1,1.15,2.9,0);
+// depósito de cajas: pasillo central
+rectLine(37.4,35.6,46.0,43.2,mkY,.12);
+// Piso epoxi (nave de almacenamiento y depósito)
+const epo1=new THREE.Mesh(new THREE.PlaneGeometry(30.9,21.5),M.epoxy);epo1.rotation.x=-Math.PI/2;epo1.position.set(32.55,.02,10.95);epo1.receiveShadow=true;scene.add(epo1);
+const epo2=new THREE.Mesh(new THREE.PlaneGeometry(9.2,11.9),M.epoxy);epo2.rotation.x=-Math.PI/2;epo2.position.set(41.65,.02,39.9);epo2.receiveShadow=true;scene.add(epo2);
+// cervecería: franja despejada junto a la línea de envasado
+rectLine(38.0,46.4,43.8,61.2,mkY,.12);
+// escalado inicial de racks y jaulas (crecen al activar la propuesta)
+racksMal.scale.y=.001;
+
+/* ---------- Asignación de cargas a la propuesta ---------- */
+function takeSlot(store,pred){const s=store.find(s=>!s.used&&(!pred||pred(s)));if(s)s.used=true;return s;}
+const rackTarget=(s)=>S(s.x,s.y,s.z,0,{inRack:true,face:s.face});
+// orden de llenado: latas en niveles altos de las filas exteriores, bolsas abajo, cajas cerca del despacho
+const slotsBy=(f)=>rackSlots.filter(f).sort((a,b)=>b.x-a.x);
+const pool={
+  cans:slotsBy(s=>s.y>0&&(s.z<2||s.z>16)), bags:slotsBy(s=>s.y===0), misc:slotsBy(s=>s.y>0&&s.z>4&&s.z<14), extra:slotsBy(()=>true)};
+function assign(list,poolArr){list.forEach(u=>{let s=poolArr.find(s=>!s.used);if(!s)s=pool.extra.find(s=>!s.used);s.used=true;u.tg.opt=rackTarget(s);});}
+assign(cans,pool.cans);assign(bags,pool.bags);assign(misc,pool.misc);
+// bolsones a su zona de bloque (3 columnas × 7 filas)
+assign(bols,pool.bags);  // bolsones en el nivel de piso de los racks (acceso selectivo)
+// pallets vacíos apilados en su zona
+emptyP.forEach((u,i)=>{u.tg.opt=S(45.0+(i%3)*1.05,Math.floor(i/3)*.76,1.15,Math.PI/2);});
+// depósito de cajas
+depU.forEach(u=>{const s=depSlots.find(s=>!s.used);s.used=true;u.tg.opt=rackTarget(s);});
+// cervecería: cajas a los racks (cerca del despacho)
+cerU.forEach(u=>{const s=pool.misc.find(s=>!s.used)||pool.extra.find(s=>!s.used);s.used=true;u.tg.opt=rackTarget(s);});
+// Jaulas para barriles (pallets jaula) ubicadas en los racks, junto al pasillo transversal
+{const free=rackSlots.filter(s=>!s.used).sort((a,b)=>a.x-b.x||a.y-b.y).slice(0,12);
+ for(const sl of free){sl.used=true;const g=new THREE.Group();_cg=[sl.x,sl.y,sl.z];
+  for(const [a,b] of [[-.48,-.58],[.48,-.58],[-.48,.58],[.48,.58]])g.add(cbar(.05,1.35,.05,a,.675,b));
+  for(const y of [.06,.68,1.33]){g.add(cbar(1.0,.04,.04,0,y,-.58));g.add(cbar(1.0,.04,.04,0,y,.58));g.add(cbar(.04,.04,1.2,-.48,y,0));g.add(cbar(.04,.04,1.2,.48,y,0));}
+  g.add(cbar(1.0,.04,1.2,0,.04,0));
+  cages.push({g,x:sl.x,y:sl.y,z:sl.z,face:sl.face});}
+ const mk=(arr,mat)=>{const m=new THREE.Mesh(mergeGeometries(arr),mat);m.castShadow=true;m.receiveShadow=true;racksMal.add(m);};
+ mk(GEO.up,rUp);mk(GEO.beam,rBeam);mk(GEO.cage,cageMat);}
+{let i=0;for(const c of cages)for(let lv=0;lv<2;lv++)for(const [a,b] of [[-.24,-.27],[.24,-.27],[-.24,.27],[.24,.27]]){if(i<KEG_N){kegs[i].tg.opt=S(c.x+a,c.y+.07+lv*.63,c.z+b,0,{caged:true,cz:c.z,face:c.face});i++;}}}
+// Excedente estacional para tercerizar: pallets de latas de las filas exteriores + pallets del depósito
+const TRUCK_SLOTS=[];for(let i=0;i<14;i++){TRUCK_SLOTS.push(new THREE.Vector3(-3.6+Math.floor(i/2)*1.2,1.05+0,(i%2?.55:-.55)));}
+const tercList=[...cans.slice(0,10),...depU.filter(u=>u.kind==='red').slice(0,4)];
+tercList.forEach((u,i)=>{u.truckSlot=TRUCK_SLOTS[i];});
+const rackTotalMal=rackSlots.length, rackTotalDep=depSlots.length;
+
+/* =====================================================================
+   Indicadores calculados sobre el modelo
+   ===================================================================== */
+const CELL=.2;
+function makeGrid(x0,z0,x1,z1,door){const nx=Math.round((x1-x0)/CELL),nz=Math.round((z1-z0)/CELL);return {x0,z0,x1,z1,nx,nz,door,occ:new Uint8Array(nx*nz),net:new Uint8Array(nx*nz)};}
+const GM=makeGrid(17.0,.2,47.8,21.7,{x:47.4,z:11.0});
+const GD=makeGrid(37.1,34.0,46.2,45.8,{x:46.0,z:39.9});
+function cellRect(G,x0,z0,x1,z1,arr,val=1){const i0=Math.max(0,Math.ceil((x0-G.x0)/CELL-.5)),i1=Math.min(G.nx-1,Math.floor((x1-G.x0)/CELL-.5-1e-9));const j0=Math.max(0,Math.ceil((z0-G.z0)/CELL-.5)),j1=Math.min(G.nz-1,Math.floor((z1-G.z0)/CELL-.5-1e-9));for(let j=j0;j<=j1;j++)for(let i=i0;i<=i1;i++)arr[j*G.nx+i]=val;}
+// Red de circulación (pasillos de autoelevador, recepción y vía peatonal), definida por el layout propuesto
+function defineNetwork(){
+  cellRect(GM,RX0,1.5,RX0+NB*BAY,4.9,GM.net);cellRect(GM,RX0,7.3,RX0+NB*BAY,11.3,GM.net);cellRect(GM,RX0,13.7,RX0+NB*BAY,17.1,GM.net);
+  cellRect(GM,20.5,.6,24.0,19.4,GM.net);cellRect(GM,40.2,2.0,47.6,18.6,GM.net);cellRect(GM,17.2,19.7,47.6,21.3,GM.net);
+  cellRect(GD,37.6,35.4,46.0,43.4,GD.net);}
+defineNetwork();
+function footprint(t,kind){const rot=Math.abs(Math.sin(t.ry||0))>.7;const w=rot?1.2:1.0,d=rot?1.0:1.2;return [t.x-w/2,t.z-d/2,t.x+w/2,t.z+d/2];}
+function computeKPI(state){
+  for(const G of [GM,GD])G.occ.fill(0);
+  const key=state==='actual'?'actual':'opt';
+  const tercer=state==='optT';
+  const placed=[];
+  for(const u of units){if(tercer&&u.truckSlot)continue;const t=u.tg[key];const G=u.zone==='dep'?GD:(u.zone==='mal'?GM:null);if(G&&!t.inRack)cellRect(G,...footprint(t),G.occ);placed.push({u,t,G});}
+  for(const k of kegs){const t=k.tg[key];if(!t.caged)cellRect(GM,t.x-.21,t.z-.21,t.x+.21,t.z+.21,GM.occ);}
+  if(key==='opt'){ROWS.forEach(r=>cellRect(GM,RX0,r.z0,RX0+NB*BAY,r.z0+1.1,GM.occ));cellRect(GD,37.6,34.1,45.7,35.2,GD.occ);cellRect(GD,37.6,44.6,45.7,45.7,GD.occ);
+    }
+  // 1) Pasillos libres
+  let netN=0,netFree=0,blockers=new Set();
+  for(const G of [GM,GD])for(let i=0;i<G.net.length;i++)if(G.net[i]){netN++;if(!G.occ[i])netFree++;}
+  for(const p of placed){if(!p.G)continue;const [a,b,c,d]=footprint(p.t);const cx=Math.floor(((a+c)/2-p.G.x0)/CELL),cz=Math.floor(((b+d)/2-p.G.z0)/CELL);if(p.G.net[cz*p.G.nx+cx]&&!p.t.inRack)blockers.add(p.u);}
+  let kegBlock=0;for(const k of kegs){const t=k.tg[key];const cx=Math.floor((t.x-GM.x0)/CELL),cz=Math.floor((t.z-GM.z0)/CELL);if(GM.net[cz*GM.nx+cx])kegBlock++;}
+  // 2) Accesibilidad y recorrido: BFS desde el portón con holgura de autoelevador (0,6 m)
+  function bfs(G){const R=3;const blocked=new Uint8Array(G.nx*G.nz);
+    for(let j=0;j<G.nz;j++)for(let i=0;i<G.nx;i++)if(G.occ[j*G.nx+i]){for(let dj=-R;dj<=R;dj++)for(let di=-R;di<=R;di++){const a=i+di,b=j+dj;if(a>=0&&b>=0&&a<G.nx&&b<G.nz)blocked[b*G.nx+a]=1;}}
+    const dist=new Float32Array(G.nx*G.nz).fill(-1);const q=[];const s=Math.floor((G.door.z-G.z0)/CELL)*G.nx+Math.floor((G.door.x-G.x0)/CELL);blocked[s]=0;dist[s]=0;q.push(s);
+    for(let h=0;h<q.length;h++){const c=q[h],i=c%G.nx,j=(c/G.nx)|0;for(const [di,dj] of [[1,0],[-1,0],[0,1],[0,-1]]){const a=i+di,b=j+dj;if(a<0||b<0||a>=G.nx||b>=G.nz)continue;const n=b*G.nx+a;if(blocked[n]||dist[n]>=0)continue;dist[n]=dist[c]+CELL;q.push(n);}}
+    return dist;}
+  const DM=bfs(GM),DD=bfs(GD);
+  const probe=(G,D,x,z)=>{const i=Math.floor((x-G.x0)/CELL),j=Math.floor((z-G.z0)/CELL);if(i<0||j<0||i>=G.nx||j>=G.nz)return -1;return D[j*G.nx+i];};
+  let acc=0,tot=0,dsum=0;
+  const onTop=(u,t)=>placed.some(p=>p.u!==u&&p.G===(u.zone==='dep'?GD:GM)&&!p.t.inRack&&Math.abs(p.t.x-t.x)<.5&&Math.abs(p.t.z-t.z)<.6&&p.t.y>t.y+.1);
+  for(const p of placed){if(!p.G)continue;tot++;const t=p.t;const D=p.G===GM?DM:DD;
+    if(!t.inRack&&onTop(p.u,t))continue;
+    let best=-1;const offs=t.inRack?[[0,t.face*(.55+1.1)]]:[[0,1.5],[0,-1.5],[1.4,0],[-1.4,0]];
+    for(const [ox,oz] of offs){const d=probe(p.G,D,t.x+ox,t.z+oz);if(d>=0&&(best<0||d<best))best=d;}
+    if(best>=0){acc++;dsum+=best;}}
+  // barriles: accesibles si están en jaula con acceso, o en la cima de una columna con frente libre
+  let kacc=0;for(const k of kegs){const t=k.tg[key];if(t.caged){const d=probe(GM,DM,t.x,t.cz+t.face*1.65);if(d>=0)kacc++;}else{const top=!kegs.some(o=>o!==k&&Math.abs(o.tg[key].x-t.x)<.1&&Math.abs(o.tg[key].z-t.z)<.1&&o.tg[key].y>t.y);if(top){const d=Math.max(probe(GM,DM,t.x+1.2,t.z),probe(GM,DM,t.x,t.z-1.2),probe(GM,DM,t.x,t.z+1.2));if(d>=0)kacc++;}}}
+  const loadCount=tot;
+  const positions=key==='opt'?(rackTotalMal+rackTotalDep):0;
+  const used=key==='opt'?(units.filter(u=>u.tg.opt.inRack&&!(tercer&&u.truckSlot)).length+cages.length):0;
+  return {
+    transit:Math.round(100*netFree/netN),
+    blockers:blockers.size+Math.ceil(kegBlock/8),
+    access:Math.round(100*(acc+kacc/8)/(tot+KEG_N/8)),
+    avgDist:acc?dsum/acc:0,
+    positions, used, loadCount,
+    rackPos:rackTotalMal+rackTotalDep, truck:tercer?tercList.length:0
+  };
+}
+
+/* =====================================================================
+   Animación de estados
+   ===================================================================== */
+let state='actual';
+const anims=[];                    // tweens activos
+let clock=0;
+function tweenObj({obj,dur=1.6,delay=0,from,to,path,onUpdate,onDone}){anims.push({obj,t0:clock+delay,dur,from,to,path,onUpdate,onDone});}
+// posición inicial
+units.forEach(u=>{const t=u.tg.actual;u.g.position.set(t.x,t.y,t.z);u.g.rotation.y=t.ry;u.cur={...t};});
+const _m=new THREE.Matrix4(),_q=new THREE.Quaternion(),_s=new THREE.Vector3(1,1,1),_p=new THREE.Vector3();
+function setKeg(k,p){_m.compose(_p.set(p.x,p.y,p.z),_q.identity(),_s);kegMesh.setMatrixAt(k.i,_m);_m.compose(_p.set(p.x,p.y+.3,p.z),_q,_s);ringMesh.setMatrixAt(k.i,_m);}
+kegs.forEach(k=>{k.cur={...k.tg.actual};setKeg(k,k.cur);});kegMesh.instanceMatrix.needsUpdate=true;ringMesh.instanceMatrix.needsUpdate=true;ringMesh.instanceColor.needsUpdate=true;
+
+function pathFor(a,b,inRack){ // trayectoria: elevar, desplazar sobre la carga, bajar/insertar
+  const lift=Math.max(a.y,b.y)+1.6;
+  const pts=[new THREE.Vector3(a.x,a.y,a.z),new THREE.Vector3(a.x,lift,a.z)];
+  if(inRack){const az=b.z+b.face*1.9;pts.push(new THREE.Vector3(b.x,lift,az),new THREE.Vector3(b.x,b.y+.05,az),new THREE.Vector3(b.x,b.y,b.z));}
+  else pts.push(new THREE.Vector3(b.x,lift,b.z),new THREE.Vector3(b.x,b.y,b.z));
+  return pts;}
+function samplePath(pts,t){const L=[0];for(let i=1;i<pts.length;i++)L.push(L[i-1]+pts[i].distanceTo(pts[i-1]));const d=t*L[L.length-1];for(let i=1;i<pts.length;i++){if(d<=L[i]){const k=(d-L[i-1])/Math.max(1e-6,L[i]-L[i-1]);return _v.copy(pts[i-1]).lerp(pts[i],k);}}return _v.copy(pts[pts.length-1]);}
+
+function truckWorld(slot){return slot.clone().applyAxisAngle(new THREE.Vector3(0,1,0),truck.rotation.y).add(truck.position);}
+let truckAway=false;
+const DRIVE=[new THREE.Vector3(53,0,11),new THREE.Vector3(60,0,11),new THREE.Vector3(60,0,4),new THREE.Vector3(60,0,-70)];
+
+function applyState(next,{instant=false}={}){
+  const prev=state;state=next;
+  const key=next==='actual'?'actual':'opt';const tercer=next==='optT';
+  const base=instant?0:0;
+  let extraDelay=0;
+  // si el camión estaba fuera y ya no se terceriza: vuelve primero
+  if(truckAway&&!tercer){truckAway=false;truck.visible=true;extraDelay=3.2;
+    const REV=[...DRIVE].reverse();tweenObj({dur:3.0,onUpdate:(e)=>{const k=ease(e);truck.position.copy(samplePath(REV,k));const ah=samplePath(REV,Math.min(1,k+.02)).clone().sub(truck.position);if(ah.lengthSq()>1e-6)truck.rotation.y=(Math.abs(ah.z)<1e-3&&ah.x<0)?0:Math.atan2(-ah.z,ah.x);tercList.forEach(u=>{u.g.position.copy(truckWorld(u.truckSlot));u.g.rotation.y=truck.rotation.y+Math.PI/2;});},onDone:()=>{truck.position.copy(TRUCK_HOME);truck.rotation.y=0;tercList.forEach(u=>{u.g.position.copy(truckWorld(u.truckSlot));});}});
+    tercList.forEach(u=>{u.g.visible=true;u.inTruck=true;});
+    tweenObj({delay:extraDelay+3.4,dur:.01,onDone:()=>{if(state!=='optT')truck.visible=false;}});}
+  // cargas
+  let order=0;
+  for(const u of units){
+    const goTruck=tercer&&u.truckSlot;
+    const fromInTruck=u.inTruck;
+    const tgt=u.tg[key];
+    const delay=extraDelay+(instant?0:order*0.012);order++;
+    if(goTruck){
+      truck.visible=true;
+      const a={...u.cur};const slotW=()=>truckWorld(u.truckSlot);
+      tweenObj({dur:instant?0.01:2.0,delay,onUpdate:(e)=>{const b=slotW();const pts=pathFor(a,{x:b.x,y:b.y,z:b.z},false);const p=samplePath(pts,ease(e));u.g.position.copy(p);u.g.rotation.y=lerp(a.ry,Math.PI/2,ease(e));},onDone:()=>{u.inTruck=true;u.cur={x:u.g.position.x,y:u.g.position.y,z:u.g.position.z,ry:Math.PI/2};}});
+      continue;}
+    const a=fromInTruck?{x:u.g.position.x,y:u.g.position.y,z:u.g.position.z,ry:u.g.rotation.y}:{...u.cur};
+    u.inTruck=false;
+    const b=tgt;
+    if(!instant&&Math.abs(a.x-b.x)+Math.abs(a.y-b.y)+Math.abs(a.z-b.z)<.01&&prev!=='actual'&&next!=='actual'){continue;}
+    const pts=pathFor(a,b,b.inRack&&key==='opt');
+    tweenObj({dur:instant?.01:1.9,delay,onUpdate:(e)=>{const p=samplePath(pts,ease(e));u.g.position.copy(p);u.g.rotation.y=lerp(a.ry||0,b.ry||0,ease(e));},onDone:()=>{u.cur={...b};}});
+  }
+  // barriles
+  kegs.forEach((k,i)=>{const a={...k.cur},b=k.tg[key];const pts=pathFor(a,b,false);
+    tweenObj({dur:instant?.01:1.5,delay:extraDelay+(instant?0:.3+i*.008),onUpdate:(e)=>{const p=samplePath(pts,ease(e));setKeg(k,p);kegMesh.instanceMatrix.needsUpdate=true;ringMesh.instanceMatrix.needsUpdate=true;},onDone:()=>{k.cur={...b};}});});
+  // camión sale con el excedente
+  if(tercer){const tEnd=extraDelay+tercList.length*0+units.length*0.012+2.4;
+    tweenObj({delay:tEnd,dur:3.6,onUpdate:(e)=>{const p=samplePath(DRIVE,ease(e));truck.position.copy(p);
+        const ahead=samplePath(DRIVE,Math.min(1,ease(e)+.02)).clone();const dir=ahead.sub(truck.position);if(dir.lengthSq()>1e-6)truck.rotation.y=Math.atan2(-dir.z,dir.x);
+        tercList.forEach(u=>{if(u.inTruck)u.g.position.copy(truckWorld(u.truckSlot));u.g.rotation.y=truck.rotation.y+Math.PI/2;});},
+      onDone:()=>{truckAway=true;truck.visible=false;truck.rotation.y=0;tercList.forEach(u=>{u.g.visible=false;});}});}
+  else if(!truckAway&&next!=='optT'&&extraDelay===0){ // camión no necesario
+    tweenObj({delay:2.2,dur:.01,onDone:()=>{if(state!=='optT')truck.visible=false;}});}
+  // elementos de la propuesta
+  const show=key==='opt';
+  const from=optMats[0].opacity;
+  tweenObj({dur:1.4,delay:show?0.2:1.2,onUpdate:(e)=>{const v=show?ease(e):1-ease(e);optMats.forEach(m=>m.opacity=Math.max(m===mkGfill?0:0,v*(m===mkGfill?.55:(m===hatchMat?.8:1))));M.epoxy.opacity=v;
+      const sy=Math.max(.001,v);racksMal.scale.y=sy;}});
+  // autoelevadores
+  if(show){fkNew.visible=true;tweenObj({dur:1.2,delay:1.0,onUpdate:e=>fkNew.scale.setScalar(Math.max(.001,ease(e)))});tweenObj({dur:1,onUpdate:e=>fkOld.scale.setScalar(Math.max(.001,1-ease(e))),onDone:()=>{fkOld.visible=false;}});}
+  else{fkOld.visible=true;tweenObj({dur:1.2,delay:.6,onUpdate:e=>fkOld.scale.setScalar(Math.max(.001,ease(e)))});tweenObj({dur:.8,onUpdate:e=>fkNew.scale.setScalar(Math.max(.001,1-ease(e))),onDone:()=>{fkNew.visible=false;}});}
+  // iluminación
+  const L0={hemi:hemi.intensity,sun:sun.intensity,sc:sun.color.clone(),hc:hemi.color.clone(),bg:scene.background.clone(),led:M.led.emissiveIntensity,exp:renderer.toneMappingExposure};
+  const L1=show?{hemi:.95,sun:2.1,sc:new THREE.Color(0xfff4e6),hc:new THREE.Color(0xe8f1ff),bg:SKY_B,led:2.2,exp:1.08}:{hemi:.55,sun:1.6,sc:new THREE.Color(0xffc98a),hc:new THREE.Color(0xffe2bd),bg:SKY_A,led:.4,exp:1.0};
+  tweenObj({dur:2.0,onUpdate:(e)=>{const k=ease(e);hemi.intensity=lerp(L0.hemi,L1.hemi,k);sun.intensity=lerp(L0.sun,L1.sun,k);sun.color.copy(L0.sc).lerp(L1.sc,k);hemi.color.copy(L0.hc).lerp(L1.hc,k);
+    scene.background.copy(L0.bg).lerp(L1.bg,k);scene.fog.color.copy(scene.background);M.led.emissiveIntensity=lerp(L0.led,L1.led,k);renderer.toneMappingExposure=lerp(L0.exp,L1.exp,k);}});
+  updateUI(next);
+}
+
+/* =====================================================================
+   Panel de indicadores
+   ===================================================================== */
+const K0=computeKPI('actual'),K1=computeKPI('opt'),K2=computeKPI('optT');
+const $=id=>document.getElementById(id);
+function countTo(el,to,dec=0){const from=parseFloat(el.dataset.v||'0');el.dataset.v=to;const t0=performance.now();const step=(now)=>{const k=ease(clamp01((now-t0)/1200));el.textContent=(from+(to-from)*k).toLocaleString('es-UY',{minimumFractionDigits:dec,maximumFractionDigits:dec});if(k<1)requestAnimationFrame(step);};requestAnimationFrame(step);}
+function delta(el,txt,cls){el.textContent=txt;el.className='delta '+(cls||'');}
+function riskLevel(k){return k.blockers===0?{t:'Bajo',n:1,c:'#3ecf8e'}:(k.blockers<=8?{t:'Medio',n:2,c:'#f2c94c'}:{t:'Alto',n:3,c:'#ff6b5b'});}
+function updateUI(s){
+  const K=s==='actual'?K0:(s==='opt'?K1:K2);
+  $('statePill').textContent=s==='actual'?'ESTADO ACTUAL':(s==='opt'?'PLANTA OPTIMIZADA':'OPTIMIZADA + TERCERIZACIÓN');
+  $('statePill').style.background=s==='actual'?'#ff8a5b':'#3ecf8e';
+  // 1
+  countTo($('v1'),K.transit);$('b1').style.width=K.transit+'%';$('b1').style.background=K.transit>85?'#3ecf8e':(K.transit>65?'#f2c94c':'#ff6b5b');
+  if(s==='actual')delta($('d1'),'línea base');else delta($('d1'),'+'+(K.transit-K0.transit)+' pp','up');
+  // 2
+  if(s==='actual'){countTo($('v2'),K.loadCount);$('u2').textContent='cargas en piso';$('b2').style.width='0%';$('s2').textContent='Sin posiciones definidas: almacenamiento en bloque, hasta 5 barriles de alto y pallets a 2 alturas.';delta($('d2'),'línea base');}
+  else{countTo($('v2'),K.positions);$('u2').textContent='posiciones';const occ=Math.round(100*K.used/K.rackPos);$('b2').style.width=occ+'%';$('b2').style.background='#3ecf8e';
+    $('s2').textContent=`${K.rackPos} en racks selectivos de 3 niveles (incluye ${cages.length} jaulas con ${KEG_N} barriles). Ocupación de racks: ${occ}%`+(s==='optT'?` · ${K.truck} pallets tercerizados.`:'.');delta($('d2'),'+'+K.rackPos+' en racks','up');}
+  // 3
+  const r=riskLevel(K);$('v3').textContent=r.t;$('v3').style.color=r.c;['r1','r2','r3'].forEach((id,i)=>$(id).style.background=i<r.n?r.c:'rgba(255,255,255,.08)');
+  $('s3').textContent=K.blockers?`${K.blockers} cargas (equivalente pallet) ocupan el trazado de pasillos y vía de evacuación; autoelevador de combustión entre las cargas.`:'Pasillos y salida despejados; señalización en piso; autoelevador eléctrico.';
+  delta($('d3'),s==='actual'?'línea base':(r.n<riskLevel(K0).n?'↓ '+(riskLevel(K0).n-r.n)+' nivel'+(riskLevel(K0).n-r.n>1?'es':''):'='),s==='actual'?'':'up');
+  // 4
+  countTo($('v4'),K.access);$('b4').style.width=K.access+'%';$('b4').style.background=K.access>85?'#3ecf8e':(K.access>60?'#f2c94c':'#ff6b5b');
+  $('s4').textContent=`Cargas accesibles sin mover otras · recorrido medio portón→carga ${K.avgDist.toFixed(1).replace('.',',')} m`;
+  if(s==='actual')delta($('d4'),'línea base');else delta($('d4'),'+'+Math.round(100*(K.access-K0.access)/Math.max(1,K0.access))+'%','up');
+  // botones
+  document.querySelectorAll('#toggle button').forEach(b=>b.setAttribute('aria-pressed',String((b.dataset.state==='actual')===(s==='actual'))));
+  const lt=$('lblTerc'),ct=$('chkTerc');ct.disabled=s==='actual';lt.classList.toggle('disabled',s==='actual');ct.checked=s==='optT';
+  labels.forEach(l=>{if(l.dyn)l.el.textContent=l.dyn(s);if(l.cls)l.el.className='tag '+l.cls(s);});
+}
+
+/* =====================================================================
+   Cámara: vistas predefinidas
+   ===================================================================== */
+const VIEWS={
+  general:{p:[88,62,96],t:[26,0,28]},
+  nave:{p:[64,30,-22],t:[24,2,11]},
+  ferm:{p:[32,17,38],t:[20,2,52.5]},
+  env:{p:[49,13,43],t:[33.5,1,52.5]},
+  dep:{p:[54,30,40],t:[31,0,10]},
+};
+function flyTo(name,dur=1.8){const v=VIEWS[name];const p0=camera.position.clone(),t0=controls.target.clone();const p1=new THREE.Vector3(...v.p),t1=new THREE.Vector3(...v.t);
+  tweenObj({dur,onUpdate:(e)=>{const k=ease(e);camera.position.lerpVectors(p0,p1,k);camera.position.y+=Math.sin(k*Math.PI)*4;controls.target.lerpVectors(t0,t1,k);}});
+  document.querySelectorAll('#views .chip').forEach(c=>c.classList.toggle('active',c.dataset.view===name));}
+
+/* =====================================================================
+   Etiquetas
+   ===================================================================== */
+const labels=[];
+function addLabel(text,x,y,z,opts={}){const el=document.createElement('div');el.className='tag '+(opts.cls?opts.cls('actual'):'');el.textContent=typeof text==='function'?text('actual'):text;$('labels').appendChild(el);labels.push({el,pos:new THREE.Vector3(x,y,z),dyn:typeof text==='function'?text:null,cls:opts.cls});}
+addLabel('Maltería · 1.056 m²',5,10.5,11);
+addLabel(s=>s==='actual'?'Almacenamiento en bloque · saturado':'Racks selectivos · pasillos 3,4–4,0 m',32,7.8,10.5,{cls:s=>s==='actual'?'warn':'ok'});
+addLabel('Silos de cebada',2.5,12,-4.8);
+addLabel('Cervecería · 534 m²',27.6,9.5,53.8);
+addLabel('Fermentación',22,6.6,48.7);
+addLabel('Sala de cocimiento',24.1,5.4,56);
+addLabel('Línea de envasado',37.1,3.4,52);
+addLabel(s=>s==='actual'?'Depósito de cajas · 193 m² · saturado':'Depósito de cajas · racks',41.6,5.4,39.9,{cls:s=>s==='actual'?'warn':'ok'});
+addLabel('Destilería',7.9,6.4,53.8);
+addLabel(s=>s==='optT'?'Excedente → operador logístico':(s==='actual'?'Portón de carga':'Recepción y despacho'),48.5,5,11);
+function updateLabels(){const w=innerWidth,h=innerHeight;for(const l of labels){_v.copy(l.pos).project(camera);const vis=_v.z<1&&_v.x>-1.1&&_v.x<1.1&&_v.y>-1.1&&_v.y<1.1;
+  l.el.style.opacity=vis?(camera.position.distanceTo(l.pos)>140?0:1):0;l.el.style.left=((_v.x+1)/2*w)+'px';l.el.style.top=((1-_v.y)/2*h)+'px';}}
+
+/* =====================================================================
+   Eventos de interfaz
+   ===================================================================== */
+document.querySelectorAll('#toggle button').forEach(b=>b.addEventListener('click',()=>{
+  const want=b.dataset.state==='actual'?'actual':($('chkTerc').checked?'optT':'opt');
+  if(want===state)return;applyState(want);flyTo('dep',2.2);}));
+$('chkTerc').addEventListener('change',e=>{if(state==='actual')return;applyState(e.target.checked?'optT':'opt');flyTo(e.target.checked?'nave':'dep',2.2);});
+$('chkRoof').addEventListener('change',e=>{roofs.visible=e.target.checked;});
+document.querySelectorAll('#views .chip').forEach(c=>c.addEventListener('click',()=>flyTo(c.dataset.view)));
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+renderer.domElement.addEventListener('pointerdown',()=>{$('hint').style.opacity=0;},{once:true});
+
+/* =====================================================================
+   Bucle principal
+   ===================================================================== */
+let last=performance.now();
+let fkPhase=0;
+function tick(now){
+  const dt=Math.min(.05,(now-last)/1000);last=now;clock+=dt;
+  for(let i=anims.length-1;i>=0;i--){const a=anims[i];if(clock<a.t0)continue;const e=clamp01((clock-a.t0)/a.dur);a.onUpdate&&a.onUpdate(e);if(e>=1){anims.splice(i,1);a.onDone&&a.onDone();}}
+  // autoelevador eléctrico recorre el pasillo principal en la propuesta
+  if(state!=='actual'&&fkNew.visible&&fkNew.scale.x>.99){fkPhase+=dt*.09;const t=(Math.sin(fkPhase*Math.PI*2-Math.PI/2)+1)/2;
+    const x=lerp(22.4,39.4,t);const dir=Math.cos(fkPhase*Math.PI*2-Math.PI/2);fkNew.position.set(x,0,9.3);fkNew.rotation.y=dir>=0?Math.PI/2:-Math.PI/2;
+    fkNew.userData.forks.position.y=.25+Math.max(0,Math.sin(fkPhase*Math.PI*4))*.9;}
+  controls.update();
+  for(const w of walls){const c=camera.position;const out=w.n.x?(w.n.x>0?c.x>w.box.x1:c.x<w.box.x0):(w.n.z>0?c.z>w.box.z1:c.z<w.box.z0);
+    const tgt=out?.05:w.m.userData.base;w.m.material.opacity+= (tgt-w.m.material.opacity)*.15;w.m.visible=w.m.material.opacity>.02;}
+  renderer.render(scene,camera);
+  updateLabels();
+  requestAnimationFrame(tick);
+}
+updateUI('actual');
+requestAnimationFrame(tick);
+setTimeout(()=>{const l=$('loader');l.style.opacity=0;setTimeout(()=>l.remove(),700);},300);
+window.__dbg=()=>{computeKPI('opt');const out=[];for(const G of [GM,GD])for(let i=0;i<G.net.length;i++)if(G.net[i]&&G.occ[i])out.push([(G.x0+(i%G.nx)*CELL).toFixed(1),(G.z0+((i/G.nx)|0)*CELL).toFixed(1)]);return out;};
+window.__planta={applyState,flyTo,computeKPI,K0,K1,K2,get state(){return state;},get clock(){return clock;},skip(sec){clock+=sec;}};
+</script>
+</body>
+</html>
